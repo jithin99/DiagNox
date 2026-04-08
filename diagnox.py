@@ -1,9 +1,36 @@
 import requests
 import json
-import time
+import re
 
 # =========================
-# 🔷 LOAD PROMPT
+# 🔍 EXTRACT VITALS FROM INPUT
+# =========================
+def extract_vitals(text):
+    vitals = {}
+
+    try:
+        hr = re.search(r'HR\s*(\d+)', text, re.IGNORECASE)
+        bp = re.search(r'BP\s*(\d+/\d+)', text, re.IGNORECASE)
+        spo2 = re.search(r'SpO2\s*(\d+)', text, re.IGNORECASE)
+        temp = re.search(r'(Temp|Temperature)\s*([\d\.]+)', text, re.IGNORECASE)
+
+        if hr:
+            vitals["heart_rate"] = int(hr.group(1))
+        if bp:
+            vitals["blood_pressure"] = bp.group(1)
+        if spo2:
+            vitals["spo2"] = int(spo2.group(1))
+        if temp:
+            vitals["temperature"] = float(temp.group(2))
+
+    except:
+        pass
+
+    return vitals
+
+
+# =========================
+# 📄 LOAD PROMPT
 # =========================
 def load_prompt(user_input):
     with open("prompt.txt", "r") as file:
@@ -17,55 +44,43 @@ def load_prompt(user_input):
         severity="Unknown",
         history="None",
         medications="None",
-        vitals="None",
-        labs="None"
+        vitals="Extract from input",
+        labs="Extract from input"
     )
 
 
 # =========================
-# 🔷 JSON CLEANER (ROBUST)
+# 🧹 CLEAN JSON (ROBUST)
 # =========================
 def clean_json(response_text):
     try:
         start = response_text.find('{')
         end = response_text.rfind('}')
 
-        if start == -1 or end == -1:
-            raise ValueError("No JSON found")
-
-        json_text = response_text[start:end+1]
-
-        # Fix common LLM issues
-        json_text = json_text.replace("\n", " ")
-        json_text = json_text.replace("\t", " ")
-
-        # Remove trailing commas
-        import re
-        json_text = re.sub(r',\s*}', '}', json_text)
-        json_text = re.sub(r',\s*]', ']', json_text)
-
-        parsed = json.loads(json_text)
-
-        return json.dumps(parsed)
+        if start != -1 and end != -1:
+            json_text = response_text[start:end+1]
+            parsed = json.loads(json_text)
+            return parsed
+        else:
+            return {
+                "error": "No JSON found",
+                "confidence": 0.0
+            }
 
     except Exception:
-        return None
+        return {
+            "error": "Invalid JSON format",
+            "confidence": 0.0
+        }
 
 
 # =========================
-# 🔷 FALLBACK RESPONSE
-# =========================
-def failsafe():
-    return json.dumps({
-        "error": "Invalid or unstructured response from model",
-        "confidence": 0.0
-    })
-
-
-# =========================
-# 🔷 MAIN FUNCTION
+# 🤖 MAIN FUNCTION
 # =========================
 def diagnox_chat(user_input):
+
+    # 🔹 Extract vitals BEFORE sending to model
+    extracted_vitals = extract_vitals(user_input)
 
     prompt = load_prompt(user_input)
 
@@ -87,42 +102,19 @@ def diagnox_chat(user_input):
 
         result = response.json().get("response", "")
 
-        # =========================
-        # 🔁 TRY CLEANING
-        # =========================
-        cleaned = clean_json(result)
-
-        if cleaned:
-            return cleaned
+        parsed = clean_json(result)
 
         # =========================
-        # 🔁 RETRY ONCE (VERY IMPORTANT)
+        # 🔥 MERGE EXTRACTED VITALS INTO OUTPUT
         # =========================
-        time.sleep(1)
+        if isinstance(parsed, dict):
+            parsed["extracted_vitals"] = extracted_vitals
 
-        retry_response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": "llama3",
-                "prompt": prompt + "\n\nReturn ONLY valid JSON. No text.",
-                "stream": False,
-                "options": {
-                    "temperature": 0
-                }
-            },
-            timeout=60
-        )
+        return json.dumps(parsed)
 
-        retry_result = retry_response.json().get("response", "")
-        cleaned_retry = clean_json(retry_result)
-
-        if cleaned_retry:
-            return cleaned_retry
-
-        # =========================
-        # ❌ FINAL FAILSAFE
-        # =========================
-        return failsafe()
-
-    except Exception:
-        return failsafe()
+    except Exception as e:
+        return json.dumps({
+            "error": "Model request failed",
+            "details": str(e),
+            "confidence": 0.0
+        })

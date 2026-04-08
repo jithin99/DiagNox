@@ -1,10 +1,9 @@
 import streamlit as st
 from diagnox import diagnox_chat
 import json
-import matplotlib.pyplot as plt
+import tempfile
 from reportlab.platypus import SimpleDocTemplate, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
-import tempfile
 
 # =========================
 # CONFIG
@@ -12,31 +11,49 @@ import tempfile
 st.set_page_config(page_title="DiagNoX", page_icon="🩺", layout="wide")
 
 # =========================
-# 🎨 PREMIUM UI
+# 🎨 UI
 # =========================
 st.markdown("""
 <style>
 .stApp {
-    background: linear-gradient(135deg, #020617, #0f172a, #1e293b);
+    background: radial-gradient(circle at top, #020617, #000000);
     color: #e2e8f0;
 }
-
 .card {
-    padding: 18px;
-    border-radius: 12px;
     background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 20px;
     margin-bottom: 15px;
+    border: 1px solid rgba(255,255,255,0.08);
 }
-
-.header {
-    font-size: 32px;
-    font-weight: 700;
+.alert {
+    background: rgba(255,0,0,0.1);
+    border: 1px solid red;
+    padding: 12px;
+    border-radius: 10px;
+    animation: blink 1s infinite;
 }
-
-.sub {
-    color: #94a3b8;
-    margin-bottom: 20px;
+@keyframes blink {
+    50% { opacity: 0.4; }
+}
+.ecg {
+    height: 80px;
+    background: black;
+    border-radius: 10px;
+    overflow: hidden;
+}
+.ecg::before {
+    content: "";
+    width: 200%;
+    height: 2px;
+    background: #22c55e;
+    position: relative;
+    top: 50%;
+    animation: ecgMove 2s linear infinite;
+}
+@keyframes ecgMove {
+    from { left: -100%; }
+    to { left: 100%; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -44,22 +61,14 @@ st.markdown("""
 # =========================
 # HEADER
 # =========================
-st.markdown('<div class="header">🩺 DiagNoX</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub">Clinical Decision Support System</div>', unsafe_allow_html=True)
-st.markdown("---")
+st.markdown("## 🩺 DiagNoX")
+st.caption("AI Clinical Decision Support System")
 
 # =========================
 # CHAT MEMORY
 # =========================
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# =========================
-# DISPLAY CHAT HISTORY
-# =========================
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+if "history" not in st.session_state:
+    st.session_state.history = []
 
 # =========================
 # INPUT
@@ -67,161 +76,164 @@ for msg in st.session_state.messages:
 user_input = st.chat_input("Enter clinical case...")
 
 if user_input:
+    st.session_state.history.append({"role": "user", "content": user_input})
 
-    # Save user message
-    st.session_state.messages.append({"role": "user", "content": user_input})
-
-    with st.chat_message("user"):
-        st.write(user_input)
-
-    # Call model
     with st.spinner("Analyzing clinical data..."):
         response = diagnox_chat(user_input)
 
-    # Save response
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    st.session_state.history.append({"role": "assistant", "content": response})
 
-    with st.chat_message("assistant"):
+# =========================
+# DISPLAY CHAT
+# =========================
+for msg in st.session_state.history:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-        try:
-            parsed = json.loads(response)
+# =========================
+# LAST RESPONSE
+# =========================
+if st.session_state.history and st.session_state.history[-1]["role"] == "assistant":
 
-            if "error" in parsed:
-                st.error(parsed["error"])
+    response = st.session_state.history[-1]["content"]
 
-            else:
+    try:
+        parsed = json.loads(response)
 
-                diagnoses = parsed.get("differential_diagnoses", [])
+        if "error" in parsed:
+            st.error(parsed["error"])
 
-                # =========================
-                # 📊 TABS
-                # =========================
-                tab1, tab2, tab3, tab4 = st.tabs(
-                    ["Overview", "Vitals", "Labs", "Reasoning"]
-                )
+        else:
+            diagnoses = parsed.get("differential_diagnoses", [])
+            if not diagnoses:
+                st.warning("No diagnoses returned")
+                st.stop()
 
-                # =========================
-                # 🧠 OVERVIEW
-                # =========================
-                with tab1:
-                    top = diagnoses[0]
-                    prob = int(top["probability"] * 100)
+            top = diagnoses[0]
+            prob = int(top["probability"] * 100)
 
-                    st.markdown(f"""
-<div class="card">
-<b>Top Diagnosis:</b> {top['name']}<br>
-Likelihood: {top['likelihood']}<br>
-Probability: {prob}%<br>
-Urgency: {top['urgency']}
-</div>
-""", unsafe_allow_html=True)
+            # =========================
+            # 🔥 DYNAMIC VITALS
+            # =========================
+            vitals = parsed.get("extracted_vitals", {})
 
-                    # Chart
-                    names = [d["name"] for d in diagnoses]
-                    probs = [int(d["probability"] * 100) for d in diagnoses]
+            hr = vitals.get("heart_rate", "--")
+            bp = vitals.get("blood_pressure", "--")
+            spo2 = vitals.get("spo2", "--")
 
-                    fig, ax = plt.subplots()
-                    ax.barh(names, probs)
-                    ax.set_xlabel("Probability (%)")
-                    ax.set_title("Diagnosis Confidence")
-                    st.pyplot(fig)
+            # =========================
+            # 🚨 SMART ALERTS
+            # =========================
+            if top["urgency"] == "Emergency":
+                st.markdown('<div class="alert">⚠️ CRITICAL CONDITION DETECTED</div>', unsafe_allow_html=True)
 
-                # =========================
-                # ❤️ VITALS TAB
-                # =========================
-                with tab2:
-                    st.write("Vitals / Features")
-                    st.json(parsed.get("normalized_features", []))
+            if spo2 != "--" and int(spo2) < 90:
+                st.markdown('<div class="alert">⚠️ LOW OXYGEN LEVEL</div>', unsafe_allow_html=True)
 
-                # =========================
-                # 🧪 LABS TAB
-                # =========================
-                with tab3:
-                    st.write("Lab Analysis")
-                    st.json(parsed.get("normalized_features", []))
+            if hr != "--" and int(hr) > 120:
+                st.markdown('<div class="alert">⚠️ TACHYCARDIA DETECTED</div>', unsafe_allow_html=True)
 
-                # =========================
-                # 🧠 REASONING TAB
-                # =========================
-                with tab4:
-                    for dx in diagnoses:
-                        st.markdown(f"### {dx['name']}")
+            # =========================
+            # GRID
+            # =========================
+            col1, col2, col3 = st.columns(3)
 
-                        st.markdown("**Supporting Findings:**")
-                        for s in dx.get("reasoning", {}).get("supporting", []):
-                            st.write(f"• {s}")
+            with col1:
+                st.markdown(f"""
+                <div class="card">
+                <h4>Vitals Monitor</h4>
+                HR: {hr} bpm<br>
+                BP: {bp}<br>
+                SpO2: {spo2}%
+                </div>
+                """, unsafe_allow_html=True)
 
-                        st.markdown("**Contradicting Findings:**")
-                        for c in dx.get("reasoning", {}).get("contradicting", []):
-                            st.write(f"• {c}")
+                st.markdown('<div class="ecg"></div>', unsafe_allow_html=True)
 
-                        st.markdown("---")
+            with col2:
+                st.markdown(f"""
+                <div class="card">
+                <h4>Top Diagnosis</h4>
+                <h3 style="color:#38bdf8;">{top['name']}</h3>
+                Likelihood: {top['likelihood']}<br>
+                Probability: {prob}%<br>
+                Urgency: {top['urgency']}
+                </div>
+                """, unsafe_allow_html=True)
 
-                # =========================
-                # 📄 PDF GENERATION (FIXED)
-                # =========================
-                def generate_pdf(data):
-                    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-                    doc = SimpleDocTemplate(temp.name)
-                    styles = getSampleStyleSheet()
+            with col3:
+                st.markdown(f"""
+                <div class="card">
+                <h4>Risk Score</h4>
+                <h2 style="color:#38bdf8;">{prob}%</h2>
+                </div>
+                """, unsafe_allow_html=True)
 
-                    content = []
+            # =========================
+            # 🤖 AI EXPLANATION
+            # =========================
+            st.markdown("### AI Clinical Explanation")
 
-                    # Title
-                    content.append(Paragraph("DiagNoX Clinical Report", styles["Title"]))
-                    content.append(Paragraph("<br/>", styles["Normal"]))
+            with st.expander("View reasoning"):
 
-                    for dx in data:
+                st.markdown("#### Supporting Evidence")
+                for s in top.get("reasoning", {}).get("supporting", []):
+                    st.write(f"✔ {s}")
 
-                        name = dx.get("name", "")
-                        likelihood = dx.get("likelihood", "")
-                        prob = int(dx.get("probability", 0) * 100)
-                        urgency = dx.get("urgency", "")
+                if top.get("reasoning", {}).get("contradicting"):
+                    st.markdown("#### Contradictions")
+                    for c in top["reasoning"]["contradicting"]:
+                        st.write(f"✖ {c}")
 
-                        reasoning = dx.get("reasoning", {})
-                        supporting = reasoning.get("supporting", [])
-                        contradicting = reasoning.get("contradicting", [])
+            # =========================
+            # 📊 CONFIDENCE
+            # =========================
+            st.markdown("### Diagnosis Confidence")
 
-                        # Diagnosis Title
-                        content.append(Paragraph(f"<b>{name}</b>", styles["Heading2"]))
+            for dx in diagnoses:
+                p = int(dx["probability"] * 100)
+                st.progress(p/100)
+                st.write(f"{dx['name']} — {p}%")
 
-                        # Meta Info
-                        content.append(Paragraph(
-                            f"Likelihood: {likelihood} | Probability: {prob}% | Urgency: {urgency}",
-                            styles["Normal"]
-                        ))
+            # =========================
+            # 📋 DETAILS
+            # =========================
+            st.markdown("### Differential Diagnoses")
 
-                        content.append(Paragraph("<br/>", styles["Normal"]))
+            for dx in diagnoses:
+                with st.expander(dx["name"]):
+                    st.write(f"Likelihood: {dx['likelihood']}")
+                    st.write(f"Probability: {int(dx['probability']*100)}%")
+                    st.write(f"Urgency: {dx['urgency']}")
 
-                        # Supporting
-                        if supporting:
-                            content.append(Paragraph("<b>Supporting Findings:</b>", styles["Normal"]))
-                            for s in supporting:
-                                content.append(Paragraph(f"- {s}", styles["Normal"]))
+                    st.write("Supporting:")
+                    for s in dx.get("reasoning", {}).get("supporting", []):
+                        st.write(f"- {s}")
 
-                        # Contradicting
-                        if contradicting:
-                            content.append(Paragraph("<b>Contradicting Findings:</b>", styles["Normal"]))
-                            for c in contradicting:
-                                content.append(Paragraph(f"- {c}", styles["Normal"]))
+            # =========================
+            # 📄 PDF
+            # =========================
+            def generate_pdf(data):
+                temp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+                doc = SimpleDocTemplate(temp.name)
+                styles = getSampleStyleSheet()
 
-                        content.append(Paragraph("<br/><br/>", styles["Normal"]))
+                content = []
+                content.append(Paragraph("DiagNoX Clinical Report", styles["Title"]))
 
-                    doc.build(content)
+                for dx in data:
+                    content.append(Paragraph(dx["name"], styles["Heading2"]))
 
-                    return temp.name
+                    for s in dx.get("reasoning", {}).get("supporting", []):
+                        content.append(Paragraph(f"✔ {s}", styles["Normal"]))
 
-                # Generate PDF
-                pdf_path = generate_pdf(diagnoses)
+                doc.build(content)
+                return temp.name
 
-                # Download button
-                with open(pdf_path, "rb") as f:
-                    st.download_button(
-                        "Download Clinical Report",
-                        f,
-                        file_name="diagnox_report.pdf"
-                    )
+            pdf_path = generate_pdf(diagnoses)
 
-        except Exception as e:
-            st.error("Invalid JSON format from model")
-            st.markdown(response)
+            with open(pdf_path, "rb") as f:
+                st.download_button("Download Report", f)
+
+    except Exception as e:
+        st.error(f"Invalid JSON: {e}")
