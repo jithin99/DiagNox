@@ -73,6 +73,9 @@ The system produces structured outputs including:
 ## Disclaimer
 This system is intended for educational and assistive purposes only. It does not replace professional medical diagnosis or clinical judgment.
 
+---
+## Some Example Ui images 
+
 <img width="1680" height="1050" alt="image" src="https://github.com/user-attachments/assets/2e56c02b-7378-4a53-b978-d7479060c825" />
 <img width="1680" height="298" alt="image" src="https://github.com/user-attachments/assets/d22a769e-93c7-4723-a864-af6ed6f878db" />
 <img width="1680" height="1050" alt="image" src="https://github.com/user-attachments/assets/9dedac33-24ec-4a98-bb0f-068c298a8812" />
